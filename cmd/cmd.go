@@ -1,6 +1,9 @@
 // Package cmd is the dispatcher; it routes CLI arguments to the matching command.
 package cmd
 
+// climax:name go-beautiful-html-coverage
+// climax:root-pkg root
+
 import (
 	"context"
 	"errors"
@@ -30,6 +33,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	comment.New(r)
 	push.New(r)
 	pull.New(r)
+	// register new commands here
 
 	if err := r.Command.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "\n%s\n", ffhelp.Command(r.Command))

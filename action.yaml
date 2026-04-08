@@ -1,80 +1,97 @@
 name: 'Go Beautiful HTML Coverage'
-description: 'A GitHub Action to track code coverage in your pull requests, with a beautiful HTML preview, for free.'
+description: 'Track Go code coverage in pull requests with a beautiful HTML preview.'
 author: 'Steven Coffman'
 branding:
   icon: 'bar-chart'
   color: 'green'
+
 inputs:
   repository:
-    description: 'Repository name with owner. For example, actions/checkout'
+    description: >
+      Repository name with owner that hosts the coverage branch, e.g. yourorg/yourrepo.
+      Defaults to the repository running the workflow. Override to centralise coverage
+      files from multiple repos in a single dedicated repo.
     default: ${{ github.repository }}
+    required: false
   branch:
+    description: >
+      Branch to checkout or create for storing coverage files. Must match the branch
+      configured in GitHub Pages (Settings → Pages → Deploy from a branch).
     default: cover
-    description: The branch to checkout or create and push coverage to.
+    required: false
   token:
-    description: The token to use for pushing to the repository.
+    description: >
+      GitHub token used for pushing to the coverage branch and posting PR comments.
+      Requires contents:write on the repository that hosts the coverage branch and
+      pull-requests:write on the repository being tested.
     default: ${{ github.token }}
+    required: false
   path:
-    description: The relative path of your go project. Useful for monorepos and custom folder structures.
+    description: >
+      Relative path to the Go module within the repository. The cover.out coverage
+      profile must exist at this path after the test step runs. Useful for monorepos
+      with multiple Go modules.
     default: './'
+    required: false
   threshold:
-    description: The minimum % of coverage required.
+    description: >
+      Minimum acceptable coverage percentage (e.g. 80). The action fails when total
+      coverage falls below this value. Set to 0 (default) to skip the threshold check.
     default: '0'
+    required: false
+
 runs:
   using: composite
   steps:
-    - name: Checkout Coverage Branch
+    - name: Build go-beautiful-html-coverage
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH"
+        go build -o "$GITHUB_ACTION_PATH/go-beautiful-html-coverage" .
+
+    - name: Checkout coverage branch
       uses: actions/checkout@v4
       with:
         repository: ${{ inputs.repository }}
         path: go-cover
         token: ${{ inputs.token }}
 
-    - id : 'normalize-path'
-      name: Normalize Input Path
-      uses: actions/github-script@v7
-      with:
-        result-encoding: string
-        script: |
-          const script = require(`${process.env.GITHUB_ACTION_PATH}/src/normalize-path.js`)
-          return script('${{ inputs.path }}')
-
-    - name: Checkout Coverage Branch
+    - name: Prepare coverage branch
       shell: bash
       run: |
-        export INPUTS_BRANCH="${{ inputs.branch }}"
-        export INPUTS_PATH="${{ steps.normalize-path.outputs.result }}"
-        ${GITHUB_ACTION_PATH}/scripts/pull.sh
+        "$GITHUB_ACTION_PATH/go-beautiful-html-coverage" pull \
+          --dir    go-cover \
+          --branch "${{ inputs.branch }}" \
+          --path   "${{ inputs.path }}"
 
-    - name: Push Coverage
+    - name: Generate and push coverage files
       shell: bash
       run: |
-        export REVISION="${{ github.event.pull_request.head.sha || github.sha }}"
-        export INPUTS_PATH="${{ steps.normalize-path.outputs.result }}"
-        export INPUTS_BRANCH="${{ inputs.branch }}"
-        export REF_NAME="${{ github.ref_name }}"
-        ${GITHUB_ACTION_PATH}/scripts/push.sh
+        "$GITHUB_ACTION_PATH/go-beautiful-html-coverage" push \
+          --workspace "${{ github.workspace }}" \
+          --revision  "${{ github.event.pull_request.head.sha || github.sha }}" \
+          --branch    "${{ inputs.branch }}" \
+          --ref-name  "${{ github.ref_name }}" \
+          --path      "${{ inputs.path }}"
 
-    - name: Post Code Coverage Comment
-      if: ${{ github.event_name == 'pull_request' }}
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ inputs.token }}
-        script: |
-          const script = require(`${process.env.GITHUB_ACTION_PATH}/src/update-comment.js`)
-          const revision = '${{ github.event.pull_request.head.sha || github.sha }}'
-          const threshold = parseFloat('${{ inputs.threshold }}', 10)
-          const path = '${{ steps.normalize-path.outputs.result }}'
-          await script({ context, github, path, revision, threshold })
+    - name: Post coverage comment
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/go-beautiful-html-coverage" comment \
+          --owner        "${{ github.repository_owner }}" \
+          --repo         "${{ github.event.repository.name }}" \
+          --issue-number "${{ github.event.pull_request.number }}" \
+          --revision     "${{ github.event.pull_request.head.sha }}" \
+          --token        "${{ inputs.token }}" \
+          --threshold    "${{ inputs.threshold }}" \
+          --path         "${{ inputs.path }}"
 
-    - name: Check Coverage Threshold
-      if: ${{ github.event_name == 'pull_request' }}
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ inputs.token }}
-        script: |
-          const script = require(`${process.env.GITHUB_ACTION_PATH}/src/check-threshold.js`)
-          const revision = '${{ github.event.pull_request.head.sha || github.sha }}'
-          const threshold = parseFloat('${{ inputs.threshold }}', 10)
-          const path = '${{ steps.normalize-path.outputs.result }}'
-          await script({ threshold, path, revision })
+    - name: Check coverage threshold
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/go-beautiful-html-coverage" check-threshold \
+          --revision  "${{ github.event.pull_request.head.sha }}" \
+          --threshold "${{ inputs.threshold }}" \
+          --path      "${{ inputs.path }}"

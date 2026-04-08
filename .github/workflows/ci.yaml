@@ -5,35 +5,51 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-
+# When a new revision is pushed to a PR, cancel all in-progress CI runs for that
+# PR. See https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  GOPRIVATE: "github.com/StevenACoffman"
+  GOFLAGS: "-trimpath"
+  GOLANGCI_LINT_VERSION: latest
 jobs:
-  test:
-    name: Test
+  ci:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
         with:
-          go-version: '1.22'
+          persist-credentials: false
 
-      - name: Generate Coverage Files
-        run: |
-          cd go-test-app-01
-          make test
-
-      - name: Go Beautiful HTML Coverage
-        if: always()
-        uses: './'
+      - uses: actions/setup-go@v6
         with:
-          path: go-test-app-01/
-          threshold: 66.7
+          go-version: 'stable'
+          check-latest: true
+          cache-dependency-path: "**/*.sum"
+
+      - name: Build
+        run: go build ./...
 
       - name: Go Beautiful HTML Coverage
         uses: './'
         with:
           path: go-test-app-02/
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9.2.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout 5m --issues-exit-code=0
+          verify: false
+
+      - name: Check go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
